@@ -16,7 +16,7 @@ pipeline {
     stage('Build Docker Images') {
       steps {
         script {
-          def services = ['user', 'product', 'order', 'payment', 'frontend']
+          def services = ['user', 'product', 'order', 'frontend']
           for (service in services) {
             dir(service) {
               sh "docker build -t jay15229/${service}:latest ."
@@ -31,7 +31,7 @@ pipeline {
         withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
           script {
             sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
-            def services = ['user', 'product', 'order', 'payment', 'frontend']
+            def services = ['user', 'product', 'order', 'frontend']
             for (service in services) {
               sh "docker push jay15229/${service}:latest"
             }
