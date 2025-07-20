@@ -2,50 +2,51 @@ pipeline {
   agent any
 
   environment {
-    AWS_DEFAULT_REGION = 'us-west-2'
-    CLUSTER_NAME = 'ecommerce-cluster'  // Replace if needed
+    AWS_REGION = 'us-west-2'
+    CLUSTER_NAME = 'ecommerce-cluster'
   }
 
   stages {
     stage('Checkout') {
       steps {
-        git 'https://github.com/jay7848/E-CommerceStore.git'
-      }
-    }
-
-    stage('Set up AWS CLI & Kubeconfig') {
-      steps {
-        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'your-aws-creds-id']]) {
-          sh '''
-            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-            aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name $CLUSTER_NAME
-            kubectl get nodes
-          '''
-        }
+        git url: 'https://github.com/jay7848/E-CommerceStore.git', branch: 'main'
       }
     }
 
     stage('Build Docker Images') {
       steps {
-        sh '''
-          docker build -t jay15229/product-service ./product-service
-          docker build -t jay15229/order-service ./order-service
-          docker build -t jay15229/user-service ./user-service
-          docker build -t jay15229/ecommerce-frontend ./ecommerce-frontend
-        '''
+        script {
+          def services = ['user', 'product', 'order', 'payment', 'frontend']
+          for (service in services) {
+            dir(service) {
+              sh "docker build -t jay15229/${service}:latest ."
+            }
+          }
+        }
       }
     }
 
-    stage('Push Docker Images') {
+    stage('Push to DockerHub') {
       steps {
-        withCredentials([string(credentialsId: 'dockerhub-password', variable: 'DOCKER_HUB_PASSWORD')]) {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+          script {
+            sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+            def services = ['user', 'product', 'order', 'payment', 'frontend']
+            for (service in services) {
+              sh "docker push jay15229/${service}:latest"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Configure kubectl') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
           sh '''
-            echo "$DOCKER_HUB_PASSWORD" | docker login -u jay15229 --password-stdin
-            docker push jay15229/product-service
-            docker push jay15229/order-service
-            docker push jay15229/user-service
-            docker push jay15229/ecommerce-frontend
+            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+            aws eks --region us-west-2 update-kubeconfig --name ecommerce-cluster
           '''
         }
       }
@@ -53,10 +54,17 @@ pipeline {
 
     stage('Deploy to EKS') {
       steps {
-        sh '''
-          kubectl apply -f k8s/
-        '''
+        sh 'kubectl apply -f k8s/'
       }
+    }
+  }
+
+  post {
+    failure {
+      echo '❌ Deployment failed. Check logs.'
+    }
+    success {
+      echo '✅ Deployment completed successfully.'
     }
   }
 }
