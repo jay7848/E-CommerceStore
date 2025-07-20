@@ -2,37 +2,41 @@ pipeline {
   agent any
 
   environment {
-    AWS_REGION = 'us-west-2'
-    CLUSTER_NAME = 'ecommerce-cluster'
-    DOCKERHUB_CREDENTIALS_ID = 'dockerhub-credentials'  // Jenkins secret ID
-    DOCKERHUB_USERNAME = 'jay15229'
+    DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+    DOCKER_USERNAME = 'jay15229'
   }
 
   stages {
     stage('Checkout Code') {
       steps {
-        git url: 'https://github.com/jay7848/E-CommerceStore.git', branch: 'main'
+        git 'https://github.com/jay7848/E-CommerceStore.git'
       }
     }
 
     stage('Build and Push Docker Images') {
       steps {
-        script {
-          def services = ['user', 'product', 'order', 'payment', 'frontend']
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
+          sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin'
 
-          withCredentials([usernamePassword(
-            credentialsId: "${DOCKERHUB_CREDENTIALS_ID}",
-            usernameVariable: 'DOCKER_USERNAME',
-            passwordVariable: 'DOCKER_PASSWORD'
-          )]) {
-            sh "echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin"
+          // Build and push each service
+          dir('user-service') {
+            sh 'docker build -t $DOCKER_USERNAME/user-service .'
+            sh 'docker push $DOCKER_USERNAME/user-service'
+          }
 
-            for (service in services) {
-              sh """
-                docker build -t $DOCKERHUB_USERNAME/${service}-service ./\${service}
-                docker push $DOCKERHUB_USERNAME/${service}-service
-              """
-            }
+          dir('order-service') {
+            sh 'docker build -t $DOCKER_USERNAME/order-service .'
+            sh 'docker push $DOCKER_USERNAME/order-service'
+          }
+
+          dir('product-service') {
+            sh 'docker build -t $DOCKER_USERNAME/product-service .'
+            sh 'docker push $DOCKER_USERNAME/product-service'
+          }
+
+          dir('frontend') {
+            sh 'docker build -t $DOCKER_USERNAME/frontend .'
+            sh 'docker push $DOCKER_USERNAME/frontend'
           }
         }
       }
@@ -40,32 +44,23 @@ pipeline {
 
     stage('Update kubeconfig') {
       steps {
-        withCredentials([[
-          $class: 'AmazonWebServicesCredentialsBinding',
-          credentialsId: 'aws-credentials'
-        ]]) {
-          sh """
-            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-            aws eks --region $AWS_REGION update-kubeconfig --name $CLUSTER_NAME
-          """
-        }
+        sh 'aws eks update-kubeconfig --region ap-south-1 --name <your-cluster-name>'
       }
     }
 
     stage('Deploy to Kubernetes') {
       steps {
-        sh "kubectl apply -f k8s/"
+        sh 'kubectl apply -f k8s/'
       }
     }
   }
 
   post {
     failure {
-      echo "❌ Deployment failed. Check logs."
+      echo '❌ Deployment failed. Check logs.'
     }
     success {
-      echo "✅ Deployment successful!"
+      echo '✅ Deployment succeeded.'
     }
   }
 }
